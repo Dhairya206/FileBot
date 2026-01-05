@@ -1,8 +1,13 @@
 python-telegram-bot==20.7
 psycopg2-binary==2.9.7
-cryptography==41.0.7
+cryptography==42.0.7
 pytube==15.0.0
 moviepy==1.0.3
-pillow==10.0.1
+pillow==10.2.0
 qrcode[pil]==7.4.2
 apscheduler==3.10.4
+python-dotenv==1.0.0
+sqlalchemy==2.0.23
+yt-dlp==2024.4.9
+img2pdf==0.4.4
+PyPDF2==3.0.1
