@@ -1,8 +1,68 @@
-python-telegram-bot
-sqlalchemy
-psycopg2-binary
-yt-dlp
-img2pdf
-Pillow
-cryptography
-python-dotenv
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+import qrcode
+import io
+from database import session, User, Ticket # Assumes Ticket model exists in database.py
+
+# This would be your UPI or Payment Link which you can change via admin
+PAYMENT_INFO = "upi://pay?pa=youraddress@bank&pn=DhairyaStore" 
+
+async def create_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    
+    # Check if user is approved first
+    db_user = session.query(User).filter_by(tg_id=user.id).first()
+    if not db_user or not db_user.is_approved:
+        await update.message.reply_text("❌ You must be approved by the admin before opening a ticket.")
+        return
+
+    # Logic to notify Admin (You)
+    # Note: In a real implementation, you'd create a group manually 
+    # and add the user, or use a specific Ticket ID system.
+    await update.message.reply_text(
+        f"🎫 **Ticket Opened!**\n\n"
+        f"User: @{user.username}\n"
+        f"ID: {user.id}\n\n"
+        "Please wait. The Admin will contact you or add you to a private "
+        "payment group shortly. You can use /pay_via_qr here to see payment details."
+    )
+    
+    # Send a notification to the Admin (You)
+    # Ensure your ADMIN_ID is set in your environment variables
+    admin_id = int(os.getenv("ADMIN_ID"))
+    await context.bot.send_message(
+        chat_id=admin_id,
+        text=f"🔔 **New Payment Ticket**\nFrom: @{user.username}\nID: `{user.id}`\n\n"
+             f"Use `/adduser @{user.username} monthly` after verifying payment."
+    )
+
+async def pay_via_qr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Generates a QR code on the fly based on the PAYMENT_INFO variable
+    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+    qr.add_data(PAYMENT_INFO)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    # Save QR to a byte stream to send as a photo without saving a file
+    bio = io.BytesIO()
+    bio.name = 'pay_qr.png'
+    img.save(bio, 'PNG')
+    bio.seek(0)
+
+    await update.message.reply_photo(
+        photo=bio,
+        caption="📸 **Scan this QR to Pay**\n\nOnce paid, send a screenshot in this chat for verification."
+    )
+
+async def close_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Only Admin can close tickets
+    user_id = update.effective_user.id
+    # Check if user is admin in DB
+    db_user = session.query(User).filter_by(tg_id=user_id).first()
+    
+    if db_user and db_user.is_admin:
+        await update.message.reply_text("🔒 **Ticket Closed.** Access granted/denied by Admin.")
+        # Logic to archive the conversation or remove user from group would go here
+    else:
+        await update.message.reply_text("❌ Only the Admin can close tickets.")
