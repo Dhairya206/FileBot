@@ -7,7 +7,3 @@ pillow==10.2.0
 qrcode[pil]==7.4.2
 apscheduler==3.10.4
 python-dotenv==1.0.0
-sqlalchemy==2.0.23
-yt-dlp==2024.4.9
-img2pdf==0.4.4
-PyPDF2==3.0.1
