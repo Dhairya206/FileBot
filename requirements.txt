@@ -1,6 +1,6 @@
 python-telegram-bot
 psycopg2-binary
 yt-dlp
-img2pdf
 Pillow
+cryptography
 python-dotenv
