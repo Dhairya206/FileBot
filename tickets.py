@@ -1,19 +1,21 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+import database
 
-ADMIN_ID = 7960003520 # Change to your ID
-
-async def create_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    await update.message.reply_text("🎫 Ticket Open! Admin @dhairya_hu will add you to a group soon.")
+def handle_ticket_creation(update, context):
+    user_id = update.message.from_user.id
+    # Ticket ka text extract karna: /ticket My train is late
+    issue_text = " ".join(context.args)
     
-    # Notify Admin
-    msg = f"New Ticket: {user.first_name} (@{user.username})\nID: {user.id}"
-    btn = [[InlineKeyboardButton("✅ Close Ticket", callback_data=f"close_{user.id}")]]
-    await context.bot.send_message(chat_id=ADMIN_ID, text=msg, reply_markup=InlineKeyboardMarkup(btn))
+    if not issue_text:
+        update.message.reply_text("Please describe your issue. Example: /ticket My issue...")
+        return
 
-async def close_ticket_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    uid = query.data.split("_")[1]
-    await query.answer()
-    await query.edit_message_text(f"Ticket for {uid} closed.")
+    ticket_id = database.save_ticket(user_id, issue_text)
+    update.message.reply_text(f"Ticket Created! ID: {ticket_id}\nOur team will contact you.")
+
+def view_tickets(update, context):
+    # Sirf admin ya user apne tickets dekh sakein
+    all_tickets = database.get_all_tickets()
+    response = "Current Tickets:\n"
+    for t in all_tickets:
+        response += f"ID: {t['_id']} | Status: {t['status']}\n"
+    update.message.reply_text(response)
