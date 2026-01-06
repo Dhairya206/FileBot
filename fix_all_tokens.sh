@@ -1,7 +1,7 @@
 #!/bin/bash
 echo "🔧 Fixing wrong bot token in all files..."
 
-WRONG_TOKEN="6987097902:AAFr-N49n-kyFWU_y6qtp8T6VK58oZqO89s"
+WRONG_TOKEN="7960003520:AAERf6LxK0aQH7rbkLKjikBBM1UrypNZBBM"
 CORRECT_TOKEN="7960003520:AAERf6LxK0aQH7rbkLKjikBBM1UrypNZBBM"
 
 echo "Wrong: $WRONG_TOKEN"

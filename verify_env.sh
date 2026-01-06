@@ -7,7 +7,7 @@ if [ ! -f .env ]; then
     echo "❌ CRITICAL: .env file missing"
     echo "Creating template..."
     cat > .env << 'TEMPLATE'
-BOT_TOKEN=6987097902:AAFr-N49n-kyFWU_y6qtp8T6VK58oZqO89s
+BOT_TOKEN=7960003520:AAERf6LxK0aQH7rbkLKjikBBM1UrypNZBBM
 ADMIN_ID=6920399284
 SECRET_CODE=2008
 SECRET_CODE_EXPIRY=2024-12-31
