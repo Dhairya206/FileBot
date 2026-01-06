@@ -1,35 +1,20 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-# Replace with your actual Admin User ID
-ADMIN_ID = 123456789 
-
-async def create_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def open_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    
-    # In a real scenario, you'd create a group via a UserBot or 
-    # use a dedicated 'Support Group' where the bot creates a new thread.
-    # Here, we notify the admin to initiate the manual group.
-    
     await update.message.reply_text(
-        f"🎫 Ticket Request Sent!\n"
-        f"Admin @dhairya_hu will add you to a private ticket group shortly.\n"
-        f"Your Ticket ID: #T{user.id}"
+        f"🎟 Ticket #{user.id} opened!\nAn admin will contact you in a private group soon."
     )
-    
-    # Alert Admin
+    # Logic to notify admin at 7960003520 (your ID)
     await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=f"🔔 **New Ticket Alert**\nUser: {user.mention_html()}\nID: {user.id}\n"
-             f"Command: /closeticket {user.id} to resolve.",
-        parse_mode='HTML'
+        chat_id="7960003520", 
+        text=f"New Ticket from @{user.username}. Use /closeticket {user.id} to end."
     )
 
 async def pay_via_qr(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # This URL can be updated via an admin command dynamically
-    qr_url = context.bot_data.get('qr_link', "https://your-default-qr-link.com/photo.jpg")
-    
+    qr_url = context.bot_data.get('qr_url', 'https://example.com/your_qr.jpg')
     await update.message.reply_photo(
         photo=qr_url,
-        caption="📸 Scan this QR code to pay.\nAfter payment, send the screenshot in your ticket chat."
+        caption="Scan this QR to pay. Send screenshot here after payment."
     )
