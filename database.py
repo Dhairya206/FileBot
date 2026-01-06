@@ -1,34 +1,50 @@
-import logging
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 
-# Logging setup taaki errors terminal mein dikhein
-logging.basicConfig(level=logging.INFO)
+class DatabaseManager:
+    def __init__(self, db_name="yt_downloader", collection_name="downloads"):
+        """
+        Initializes the connection to MongoDB.
+        """
+        # Default connection string for a local MongoDB instance
+        self.client = MongoClient("mongodb://localhost:27017/")
+        self.db = self.client[db_name]
+        self.collection = self.db[collection_name]
 
-try:
-    import pymongo
-    # Connection setup
-    # Agar aapka MongoDB local hai toh localhost use karein, 
-    # varna apni MongoDB Atlas URI yahan dalein
-    client = pymongo.MongoClient("mongodb://localhost:27017/", serverSelectionTimeoutMS=5000)
-    db = client["railway_bot"]
-    tickets_col = db["tickets"]
-    MONGO_AVAILABLE = True
-    logging.info("Database connected successfully!")
-except (ImportError, Exception) as e:
-    MONGO_AVAILABLE = False
-    logging.warning(f"Database NOT connected: {e}. Bot will run without DB.")
+    def check_connection(self):
+        """Verifies if the database is accessible."""
+        try:
+            self.client.admin.command('ping')
+            print("Successfully connected to MongoDB.")
+            return True
+        except ConnectionFailure:
+            print("MongoDB connection failed. Make sure the service is running.")
+            return False
 
-def save_ticket(user_id, issue):
-    if not MONGO_AVAILABLE:
-        return "Offline_Mode_No_DB"
-    
-    ticket_data = {"user_id": user_id, "issue": issue, "status": "Open"}
-    try:
-        result = tickets_col.insert_one(ticket_data)
-        return result.inserted_id
-    except Exception:
-        return "Error_Saving_Data"
+    def save_video_metadata(self, video_data):
+        """
+        Inserts video info into the database.
+        Expected video_data format: {'title': str, 'url': str, 'status': str}
+        """
+        try:
+            result = self.collection.insert_one(video_data)
+            print(f"Metadata saved with ID: {result.inserted_id}")
+            return result.inserted_id
+        except Exception as e:
+            print(f"Error saving to database: {e}")
+            return None
 
-def get_all_tickets():
-    if not MONGO_AVAILABLE:
-        return []
-    return list(tickets_col.find())
+    def is_already_downloaded(self, video_url):
+        """Checks if a URL already exists in our collection."""
+        return self.collection.find_one({"url": video_url}) is not None
+
+# Example Usage:
+if __name__ == "__main__":
+    db = DatabaseManager()
+    if db.check_connection():
+        sample_data = {
+            "title": "My First Download",
+            "url": "https://youtube.com/watch?v=example",
+            "status": "completed"
+        }
+        db.save_video_metadata(sample_data)
