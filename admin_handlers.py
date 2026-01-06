@@ -1,23 +1,30 @@
 from telegram import Update
 from telegram.ext import ContextTypes
-from database import get_connection
-from datetime import datetime, timedelta
+from database import get_conn
+import datetime
 
-async def verify_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if context.args and context.args[0] == "2008":
-        conn = get_connection()
+ADMIN_ID = 7960003520
+
+async def add_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        uname = context.args[0].replace("@", "")
+        plan = context.args[1]
+        expiry = datetime.datetime.now() + datetime.timedelta(days=30)
+        
+        conn = get_conn()
         cur = conn.cursor()
-        expiry = datetime.now() + timedelta(days=365)
-        cur.execute("UPDATE users SET is_admin = True, admin_expiry = %s WHERE user_id = %s", (expiry, user_id))
+        cur.execute("UPDATE users SET is_approved=True, plan=%s, expiry_date=%s WHERE username=%s", (plan, expiry, uname))
         conn.commit()
-        cur.close()
-        conn.close()
-        await update.message.reply_text("✅ Admin access granted for 1 year! No further code needed.")
-    else:
-        await update.message.reply_text("❌ Incorrect code.")
+        await update.message.reply_text(f"✅ @{uname} approved on {plan} plan.")
+    except:
+        await update.message.reply_text("Usage: /adduser @username monthly")
 
-async def add_user_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Example: /adduser @username monthly
-    # Real implementation would look up ID via username in DB
-    await update.message.reply_text("User subscription updated successfully.")
+async def view_user_storage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    uname = context.args[0].replace("@", "")
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT f.file_name FROM files f JOIN users u ON f.user_id=u.user_id WHERE u.username=%s", (uname,))
+    files = cur.fetchall()
+    await update.message.reply_text(f"Files: {str(files)}")
