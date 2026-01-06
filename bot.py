@@ -1,31 +1,31 @@
 import os
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
-from database import init_db
-from admin_handlers import verify_admin
-from tickets import open_ticket, pay_via_qr
-from tools import yt_downloader
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from database import init_db, get_conn
+import tickets, admin_handlers, media_tools
 
 TOKEN = "7960003520:AAERf6LxK0aQH7rbkLKjikBBM1UrypNZBBM"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Welcome to @dhairya_hu. Send your username and link for approval.")
+    await update.message.reply_text("Welcome to @dhairya_hu Storage Bot!")
 
-def main():
-    init_db() # Setup tables on Railway
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    # Admin
-    app.add_handler(CommandHandler("login", verify_admin))
-    
-    # Subscriptions & Tickets
-    app.add_handler(CommandHandler("ticket", open_ticket))
-    app.add_handler(CommandHandler("pay_via_qr", pay_via_qr))
-    
-    # Tools
-    app.add_handler(CommandHandler("youtube_download", yt_downloader))
-
-    print("Bot is starting...")
-    app.run_polling()
+async def auth_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args and context.args[0] == "2008":
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET is_admin=True WHERE user_id=%s", (update.effective_user.id,))
+        conn.commit()
+        await update.message.reply_text("Admin access granted.")
 
 if __name__ == '__main__':
-    main()
+    init_db()
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", auth_admin))
+    app.add_handler(CommandHandler("ticket", tickets.create_ticket))
+    app.add_handler(CallbackQueryHandler(tickets.close_ticket_cb, pattern="^close_"))
+    app.add_handler(CommandHandler("adduser", admin_handlers.add_user_cmd))
+    app.add_handler(CommandHandler("viewstorage", admin_handlers.view_user_storage))
+    
+    app.run_polling()
