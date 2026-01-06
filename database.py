@@ -1,8 +1,9 @@
 import os
 import psycopg2
 from psycopg2 import sql
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def init_db():
                 id SERIAL PRIMARY KEY,
                 ticket_id TEXT UNIQUE NOT NULL,
                 user_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
-               ticket_type TEXT DEFAULT 'payment', -- 'payment', 'support', 'technical'
+                ticket_type TEXT DEFAULT 'payment', -- 'payment', 'support', 'technical'
                 status TEXT DEFAULT 'open', -- 'open', 'in_progress', 'closed', 'resolved'
                 priority TEXT DEFAULT 'normal', -- 'low', 'normal', 'high', 'urgent'
                 subject TEXT,
@@ -133,12 +134,30 @@ def init_db():
                 user_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
                 amount INTEGER NOT NULL,
                 plan_type TEXT NOT NULL,
-                payment_method TEXT NOT NULL, -- 'upi', 'qr', 'cash', 'bank_transfer'
+                payment_method TEXT NOT NULL, -- 'upi', 'qr', 'cash', 'bank_transfer', 'redeem_code'
                 transaction_id TEXT,
                 status TEXT DEFAULT 'pending', -- 'pending', 'completed', 'failed', 'refunded'
                 payment_date TIMESTAMP DEFAULT NOW(),
                 verified_by BIGINT, -- Admin telegram_id
                 verified_at TIMESTAMP,
+                notes TEXT
+            )
+        """)
+        
+        # Redeem Codes table - NEW ADDITION
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS redeem_codes (
+                id SERIAL PRIMARY KEY,
+                code TEXT UNIQUE NOT NULL,
+                plan_type TEXT NOT NULL, -- 'monthly', 'quarterly', 'half_yearly', 'yearly'
+                value INTEGER NOT NULL, -- Amount in rupees
+                created_by BIGINT, -- Admin telegram_id
+                created_at TIMESTAMP DEFAULT NOW(),
+                expires_at TIMESTAMP,
+                max_uses INTEGER DEFAULT 1,
+                used_count INTEGER DEFAULT 0,
+                is_active BOOLEAN DEFAULT TRUE,
+                used_by TEXT[], -- Array of user_ids who used this code
                 notes TEXT
             )
         """)
@@ -196,7 +215,9 @@ def init_db():
             ('ticket_auto_close_hours', '48', 'number'),
             ('enable_youtube_download', 'true', 'boolean'),
             ('max_file_size_mb', '2048', 'number'), -- 2GB
-            ('qr_upi_id', '7960003520@ybl', 'text')
+            ('qr_upi_id', '7960003520@ybl', 'text'),
+            ('redeem_code_expiry_days', '30', 'number'),
+            ('redeem_code_prefix', 'RC', 'text')
             ON CONFLICT (setting_key) DO NOTHING
         """)
         
@@ -216,6 +237,7 @@ def init_db():
         logger.error(f"❌ Database initialization error: {e}")
         raise
 
+# ==================== USER FUNCTIONS ====================
 def get_user(user_id):
     """Get user by telegram_id"""
     try:
@@ -277,7 +299,25 @@ def approve_user(telegram_id):
         logger.error(f"Approve user error: {e}")
         return False
 
-def add_subscription(user_id, plan_type, price, days):
+def set_admin(telegram_id, is_admin=True):
+    """Set user as admin"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE users SET admin_access = %s, admin_code_used = NOW() WHERE telegram_id = %s",
+            (is_admin, telegram_id)
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Set admin error: {e}")
+        return False
+
+# ==================== SUBSCRIPTION FUNCTIONS ====================
+def add_subscription(user_id, plan_type, price, days, payment_method='redeem_code', transaction_id=None):
     """Add user subscription"""
     try:
         conn = get_db_connection()
@@ -303,10 +343,20 @@ def add_subscription(user_id, plan_type, price, days):
         cursor.execute(
             """
             INSERT INTO subscriptions 
-            (user_id, plan_type, price, storage_limit, expiry_date, is_active, purchase_date)
-            VALUES (%s, %s, %s, %s, %s, TRUE, NOW())
+            (user_id, plan_type, price, storage_limit, expiry_date, is_active, purchase_date, payment_method, transaction_id)
+            VALUES (%s, %s, %s, %s, %s, TRUE, NOW(), %s, %s)
             """,
-            (user_id, plan_type, price, storage_limit, expiry_date)
+            (user_id, plan_type, price, storage_limit, expiry_date, payment_method, transaction_id)
+        )
+        
+        # Record payment
+        cursor.execute(
+            """
+            INSERT INTO payments 
+            (user_id, amount, plan_type, payment_method, transaction_id, status, payment_date, verified_by, verified_at)
+            VALUES (%s, %s, %s, %s, %s, 'completed', NOW(), %s, NOW())
+            """,
+            (user_id, price, plan_type, payment_method, transaction_id, user_id)
         )
         
         conn.commit()
@@ -342,6 +392,211 @@ def check_subscription(user_id):
         logger.error(f"Check subscription error: {e}")
         return None
 
+def get_user_subscription(user_id):
+    """Get user's subscription details"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM subscriptions 
+            WHERE user_id = %s 
+            AND is_active = TRUE 
+            ORDER BY purchase_date DESC 
+            LIMIT 1
+            """,
+            (user_id,)
+        )
+        subscription = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return subscription
+    except Exception as e:
+        logger.error(f"Get user subscription error: {e}")
+        return None
+
+# ==================== REDEEM CODE FUNCTIONS ====================
+def create_redeem_code(plan_type, value, created_by, expires_days=30, max_uses=1, notes=""):
+    """Create a new redeem code"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Generate unique code
+        import random
+        import string
+        
+        # Get prefix from settings
+        cursor.execute(
+            "SELECT setting_value FROM admin_settings WHERE setting_key = 'redeem_code_prefix'"
+        )
+        prefix_result = cursor.fetchone()
+        prefix = prefix_result[0] if prefix_result else "RC"
+        
+        # Generate random part
+        random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        code = f"{prefix}{random_part}"
+        
+        expires_at = datetime.now() + timedelta(days=expires_days)
+        
+        cursor.execute(
+            """
+            INSERT INTO redeem_codes 
+            (code, plan_type, value, created_by, expires_at, max_uses, is_active, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s)
+            RETURNING code
+            """,
+            (code, plan_type, value, created_by, expires_at, max_uses, notes)
+        )
+        
+        code = cursor.fetchone()[0]
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return code
+    except Exception as e:
+        logger.error(f"Create redeem code error: {e}")
+        return None
+
+def validate_redeem_code(code, user_id):
+    """Validate and use a redeem code"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            """
+            SELECT * FROM redeem_codes 
+            WHERE code = %s 
+            AND is_active = TRUE 
+            AND (expires_at IS NULL OR expires_at > NOW())
+            AND (max_uses = 0 OR used_count < max_uses)
+            """,
+            (code,)
+        )
+        
+        redeem_code = cursor.fetchone()
+        
+        if not redeem_code:
+            cursor.close()
+            conn.close()
+            return None, "Invalid or expired code"
+        
+        # Check if user already used this code
+        code_id = redeem_code[0]
+        used_by = redeem_code[10] or []  # used_by array
+        
+        if str(user_id) in used_by:
+            cursor.close()
+            conn.close()
+            return None, "You have already used this code"
+        
+        # Update code usage
+        cursor.execute(
+            """
+            UPDATE redeem_codes 
+            SET used_count = used_count + 1, 
+                used_by = array_append(used_by, %s)
+            WHERE id = %s 
+            AND (max_uses = 0 OR used_count < max_uses)
+            RETURNING plan_type, value
+            """,
+            (str(user_id), code_id)
+        )
+        
+        updated = cursor.fetchone()
+        
+        if not updated:
+            cursor.close()
+            conn.close()
+            return None, "Code usage limit reached"
+        
+        plan_type, value = updated
+        
+        # If all uses exhausted, deactivate code
+        cursor.execute(
+            """
+            UPDATE redeem_codes 
+            SET is_active = FALSE 
+            WHERE id = %s 
+            AND max_uses > 0 
+            AND used_count >= max_uses
+            """,
+            (code_id,)
+        )
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return {'plan_type': plan_type, 'value': value}, "Code validated successfully"
+    except Exception as e:
+        logger.error(f"Validate redeem code error: {e}")
+        return None, f"Error: {str(e)}"
+
+def get_redeem_codes(created_by=None, active_only=True):
+    """Get all redeem codes"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if created_by:
+            if active_only:
+                cursor.execute(
+                    """
+                    SELECT * FROM redeem_codes 
+                    WHERE created_by = %s 
+                    AND is_active = TRUE
+                    ORDER BY created_at DESC
+                    """,
+                    (created_by,)
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT * FROM redeem_codes 
+                    WHERE created_by = %s
+                    ORDER BY created_at DESC
+                    """,
+                    (created_by,)
+                )
+        else:
+            if active_only:
+                cursor.execute(
+                    "SELECT * FROM redeem_codes WHERE is_active = TRUE ORDER BY created_at DESC"
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM redeem_codes ORDER BY created_at DESC"
+                )
+        
+        codes = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return codes
+    except Exception as e:
+        logger.error(f"Get redeem codes error: {e}")
+        return []
+
+def deactivate_redeem_code(code):
+    """Deactivate a redeem code"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE redeem_codes SET is_active = FALSE WHERE code = %s",
+            (code,)
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Deactivate redeem code error: {e}")
+        return False
+
+# ==================== FILE FUNCTIONS ====================
 def add_file(user_id, file_name, file_type, file_size, file_path=None, encrypted_data=None, tags=None):
     """Add file to database"""
     try:
@@ -436,14 +691,16 @@ def delete_file(file_id):
         logger.error(f"Delete file error: {e}")
         return False
 
+# ==================== TICKET FUNCTIONS ====================
 def create_ticket(user_id, ticket_type='payment', subject='', description=''):
     """Create new ticket"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        import uuid
-        ticket_id = f"TKT-{uuid.uuid4().hex[:8].upper()}"
+        import random
+        import string
+        ticket_id = f"TKT-{''.join(random.choices(string.ascii_uppercase + string.digits, k=8))}"
         
         cursor.execute(
             """
@@ -515,29 +772,75 @@ def update_ticket_status(ticket_id, status, assigned_to=None, resolution=None):
         logger.error(f"Update ticket status error: {e}")
         return False
 
-def add_ticket_message(ticket_db_id, user_id, message_text, message_type='text', file_id=None):
-    """Add message to ticket"""
+# ==================== PAYMENT FUNCTIONS ====================
+def record_payment(user_id, amount, plan_type, payment_method, transaction_id, status='pending'):
+    """Record a payment"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute(
             """
-            INSERT INTO ticket_messages 
-            (ticket_id, user_id, message_text, message_type, file_id, sent_at)
-            VALUES (%s, %s, %s, %s, %s, NOW())
+            INSERT INTO payments 
+            (user_id, amount, plan_type, payment_method, transaction_id, status, payment_date)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+            RETURNING id
             """,
-            (ticket_db_id, user_id, message_text, message_type, file_id)
+            (user_id, amount, plan_type, payment_method, transaction_id, status)
         )
+        
+        payment_id = cursor.fetchone()[0]
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return payment_id
+    except Exception as e:
+        logger.error(f"Record payment error: {e}")
+        return None
+
+def verify_payment(payment_id, verified_by):
+    """Verify a payment"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            """
+            UPDATE payments 
+            SET status = 'completed', verified_by = %s, verified_at = NOW()
+            WHERE id = %s
+            RETURNING user_id, amount, plan_type
+            """,
+            (verified_by, payment_id)
+        )
+        
+        payment_info = cursor.fetchone()
+        
+        if payment_info:
+            user_id, amount, plan_type = payment_info
+            
+            # Add subscription
+            days_map = {
+                'monthly': 30,
+                'quarterly': 90,
+                'half_yearly': 180,
+                'yearly': 365
+            }
+            
+            days = days_map.get(plan_type, 30)
+            add_subscription(user_id, plan_type, amount, days, 'manual', f"payment_{payment_id}")
         
         conn.commit()
         cursor.close()
         conn.close()
+        
         return True
     except Exception as e:
-        logger.error(f"Add ticket message error: {e}")
+        logger.error(f"Verify payment error: {e}")
         return False
 
+# ==================== ADMIN SETTINGS ====================
 def get_admin_settings():
     """Get all admin settings"""
     try:
@@ -583,6 +886,7 @@ def update_admin_setting(key, value, updated_by=None):
         logger.error(f"Update admin setting error: {e}")
         return False
 
+# ==================== QR CODE FUNCTIONS ====================
 def get_qr_code(qr_type='upi'):
     """Get active QR code"""
     try:
@@ -630,6 +934,7 @@ def update_qr_code(qr_type, upi_id=None, bank_name=None, account_number=None, if
         logger.error(f"Update QR code error: {e}")
         return False
 
+# ==================== ACTIVITY LOGGING ====================
 def log_activity(user_id, activity_type, activity_details=None, ip_address=None, user_agent=None):
     """Log user activity"""
     try:
@@ -659,6 +964,7 @@ def log_activity(user_id, activity_type, activity_details=None, ip_address=None,
         logger.error(f"Log activity error: {e}")
         return False
 
+# ==================== STATISTICS ====================
 def get_user_stats(user_id):
     """Get user statistics"""
     try:
@@ -690,17 +996,29 @@ def get_user_stats(user_id):
         )
         file_types = cursor.fetchall()
         
+        # Get subscription info
+        cursor.execute(
+            """
+            SELECT plan_type, storage_limit, expiry_date 
+            FROM subscriptions 
+            WHERE user_id = %s AND is_active = TRUE AND expiry_date > NOW()
+            """,
+            (user_id,)
+        )
+        subscription = cursor.fetchone()
+        
         cursor.close()
         conn.close()
         
         return {
             'total_files': total_files,
             'storage_used': storage_used,
-            'file_types': file_types
+            'file_types': file_types,
+            'subscription': subscription
         }
     except Exception as e:
         logger.error(f"Get user stats error: {e}")
-        return {'total_files': 0, 'storage_used': 0, 'file_types': []}
+        return {'total_files': 0, 'storage_used': 0, 'file_types': [], 'subscription': None}
 
 def get_all_users(approved_only=False):
     """Get all users"""
@@ -741,24 +1059,3 @@ def search_files(user_id, query):
     except Exception as e:
         logger.error(f"Search files error: {e}")
         return []
-
-def cleanup_expired_files(days=30):
-    """Cleanup files older than specified days"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute(
-            "DELETE FROM files WHERE upload_date < NOW() - INTERVAL '%s days'",
-            (days,)
-        )
-        
-        deleted_count = cursor.rowcount
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        return deleted_count
-    except Exception as e:
-        logger.error(f"Cleanup expired files error: {e}")
-        return 0
