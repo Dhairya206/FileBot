@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 SECRET_CODE = os.getenv('SECRET_CODE', '2008')
-SECRET_CODE_EXPIRY = datetime(2025, 1, 1)  # Valid until end of 2024
 
 # Database instance
 db = Database()
@@ -45,26 +44,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     user = update.effective_user
     user_id = user.id
-    
-    # Check if user exists in database
-    user_data = db.get_user(user_id)
-    
-    if not user_data:
-        # New user - start registration process
-        context.user_data['registration'] = {
-            'telegram_id': user_id,
+#    
+#    # Check if user exists in database
+#    user_data = db.get_user(user_id)
+#    
+#    if not user_data:
+#        # New user - start registration process
+#        context.user_data['registration'] = {
+#            'telegram_id': user_id,
             'username': user.username
         }
         
-        # Check if secret code is still valid
-        if datetime.now() > SECRET_CODE_EXPIRY:
-            await update.message.reply_text(
-                "🚫 **Registration Closed**\n\n"
-                "The secret code period has expired. "
-                "No new registrations are being accepted at this time.",
-                parse_mode='Markdown'
-            )
-            return
         
         await update.message.reply_text(
             "🔐 **Welcome to TheFilex Bot**\n\n"
