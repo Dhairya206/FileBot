@@ -1,24 +1,35 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+import psycopg2
 import os
+from datetime import datetime, timedelta
 
-Base = declarative_base()
+DATABASE_URL = os.getenv('DATABASE_URL')
 
-class User(Base):
-    __tablename__ = 'users'
-    tg_id = Column(Integer, primary_key=True)
-    username = Column(String)
-    is_approved = Column(Boolean, default=False)
-    is_admin = Column(Boolean, default=False)
-    storage_limit = Column(Float, default=0.0) # In MB
-    used_storage = Column(Float, default=0.0)
-    plan_expiry = Column(DateTime, nullable=True)
-
-# Railway provides the DATABASE_URL automatically
-engine = create_engine(os.getenv("DATABASE_URL"))
-Session = sessionmaker(bind=engine)
-session = Session()
+def get_connection():
+    return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    Base.metadata.create_all(engine)
+    conn = get_connection()
+    cur = conn.cursor()
+    # Users: stores plan, storage used, and admin expiry
+    cur.execute('''CREATE TABLE IF NOT EXISTS users (
+        user_id BIGINT PRIMARY KEY,
+        username TEXT,
+        plan TEXT DEFAULT 'free',
+        expiry_date TIMESTAMP,
+        storage_used BIGINT DEFAULT 0,
+        storage_limit BIGINT DEFAULT 0,
+        is_admin BOOLEAN DEFAULT FALSE,
+        admin_expiry TIMESTAMP
+    )''')
+    # Files: stores the Telegram file_id (Universal Storage)
+    cur.execute('''CREATE TABLE IF NOT EXISTS files (
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT,
+        file_id TEXT,
+        file_name TEXT,
+        file_type TEXT,
+        category TEXT
+    )''')
+    conn.commit()
+    cur.close()
+    conn.close()
