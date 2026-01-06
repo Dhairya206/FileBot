@@ -1,18 +1,19 @@
 import yt_dlp
-import img2pdf
+from PIL import Image
 import os
 
-async def yt_downloader(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = context.args[0]
-    await update.message.reply_text("📥 Fetching video qualities...")
-    # Simplified logic: downloads best available
-    ydl_opts = {'format': 'best', 'outtmpl': 'vid.mp4'}
+def download_yt(url, quality='best'):
+    ydl_opts = {
+        'format': f'bestvideo[height<={quality[:-1]}]+bestaudio/best' if 'p' in quality else 'best',
+        'outtmpl': 'downloads/%(title)s.%(ext)s',
+    }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-    
-    await update.message.reply_video(video=open('vid.mp4', 'rb'))
-    os.remove('vid.mp4')
+        info = ydl.extract_info(url, download=True)
+        return ydl.prepare_filename(info)
 
-async def images_to_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Logic to collect photos from chat and merge
-    await update.message.reply_text("PDF generated successfully.")
+def images_to_pdf(image_list, output_path):
+    images = [Image.open(img).convert('RGB') for img in image_list]
+    if images:
+        images[0].save(output_path, save_all=True, append_images=images[1:])
+        return output_path
+    return None
