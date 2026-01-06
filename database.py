@@ -762,4 +762,3 @@ def cleanup_expired_files(days=30):
     except Exception as e:
         logger.error(f"Cleanup expired files error: {e}")
         return 0
-```
