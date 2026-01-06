@@ -1,6 +1,6 @@
 import psycopg2
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 DATABASE_URL = os.getenv('DATABASE_URL')
 
@@ -20,22 +20,14 @@ def init_db():
         expiry_date TIMESTAMP,
         qr_link TEXT DEFAULT 'https://imgur.com/your_default_qr'
     )''')
-    # Files table (Isolated storage)
+    # Storage table
     cur.execute('''CREATE TABLE IF NOT EXISTS files (
         id SERIAL PRIMARY KEY,
         user_id BIGINT,
         file_id TEXT,
         file_name TEXT,
-        file_type TEXT,
-        encrypted BOOLEAN DEFAULT TRUE
+        file_type TEXT
     )''')
     conn.commit()
     cur.close()
     conn.close()
-
-def is_admin(user_id):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
-    res = cur.fetchone()
-    return res[0] if res else False
